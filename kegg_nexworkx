@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+# -*- coding: UTF=8 -*-
+import os
+import sys
+import numpy as np
+import time
+import math
+from optparse import OptionParser
+import pygraphviz as pgv
+from pygraphviz import *
+import matplotlib.pyplot as plt
+import networkx as nx
+
+def sig_enrich_kegg(kegg_enrich_file, pvalue_max, maxnum = None, pvalue = None, qsite = 5, output_path = './'):
+	if not os.path.isfile(kegg_enrich_file):
+		sys.stderr.write('[INFO] NO kegg enrich file for inputting.\n')
+		exit(1)
+	pvalue_save = []
+	with open(kegg_enrich_file, 'r') as fp_kegg:
+		kegg_info = []
+		[(kegg_info.append(carr.strip().split('\t')), pvalue_save.append(float(carr.strip().split('\t')[qsite]))) for carr in fp_kegg if not carr.startswith('#')]
+	sig_kegg = []
+	if maxnum:
+		if len(kegg_info) < maxnum: maxnum = len(kegg_info)
+		pvalue_max = []
+		pvalue_save = [(v,i) for i,v in enumerate(pvalue_save)]
+		pvalue_save.sort()
+		pvalue_sorted, index = zip(*pvalue_save)
+		[(sig_kegg.append(kegg_info[index[i]]), pvalue_max.append(float(kegg_info[index[i]][qsite]))) for i in xrange(maxnum)]
+		pvalue_save = pvalue_max
+	else:
+		if type(pvalue_max) is int:
+			[(sig_kegg.append(carr), pvalue_save.append(float(carr[qsite]))) for carr in kegg_info if float(carr[qsite]) <= pvalue]
+			if len(sig_kegg) > pvalue_max:
+				tmp_sig_kegg = []; tmp_pvalue_save = []
+				[tmp_pvalue_save.append(float(iterm[qsite])) for iterm in sig_kegg]
+				tmp_pvalue_save = [(v,i) for i,v in enumerate(tmp_pvalue_save)]
+				tmp_pvalue_save.sort()
+				tmp_pvalue_sorted, index = zip(*tmp_pvalue_save)
+				[tmp_sig_kegg.append(sig_kegg[index[i]]) for i in xrange(pvalue_max)]
+				sig_kegg = tmp_sig_kegg
+		else:
+			sys.stderr.write("[ERROR] The option of 'pvalue_max' must be integer.\n")
+			exit(1)
+	
+	with open(output_path + kegg_enrich_file.split('/')[-1] + '.network', 'w') as fp_network:
+		fp_network.write('#KEGGid\tKEGGdescription\tKEGGclass\tKEGGsubclass\tOddsratio\tp-value\tq-value\tGene_numbers\n')
+		[fp_network.write('\t'.join(carr) + '\n') for carr in sig_kegg]
+	return sig_kegg, pvalue_save
+
+def define_nodecolors(pvalue_save, node_color = ''):
+	nodecolors = []
+	pvalue_save = (pvalue_save - np.min(pvalue_save) + 1)/(np.max(pvalue_save) - np.min(pvalue_save) + 1).tolist()
+	[nodecolors.append(node_color + "%2x"%(int(pvalue_save[i]*128)+64)) for i in xrange(len(pvalue_save))]
+	return nodecolors
+
+def parse_sig_kegg(sig_kegg, nodecolors, kegg_site, output_path, label_size = 25, hira = 2):
+	for i in xrange(len(sig_kegg)):
+		tmp = sig_kegg[i][2]; sig_kegg[i][2] = sig_kegg[i][3]; sig_kegg[i][3] = tmp
+	Graph = AGraph(strict = False, directed = True, overlap = "scale", splines="ortho", nodesep="0.5", rankdir = "LR")
+	Graph.node_attr['style'] = 'filled'
+	Graph.edge_attr['style'] = 'setlinewidth(2.5)'
+	while hira>0 :
+		if kegg_site[hira] == kegg_site[-1]:
+			for i in xrange(len(sig_kegg)):
+				node_1 = sig_kegg[i][kegg_site[hira]]; node_2 = sig_kegg[i][kegg_site[hira - 1]]
+				part_num_1 = int(math.ceil(len(node_1)/float(label_size))); part_num_2 = int(math.ceil(len(node_2)/float(label_size)))
+				if part_num_1 > 1:
+					label_1 = '\\n'.join([(node_1[((label-1) * label_size) : (label * label_size - 1)]) for label in xrange(1, part_num_1 + 1)])
+				else:
+					label_1 = node_1 + ' ' * (label_size - len(node_1))
+				if part_num_2 > 1:
+					label_2 = '\\n'.join([node_2[((label-1) * label_size) : (label * label_size - 1)] for label in xrange(1, part_num_2 + 1)])
+				else:
+					label_2 = node_2 + ' ' * (label_size - len(node_2))
+				Graph.add_node(node_1, shape = 'rectangle', label = label_1); node_pgv = Graph.get_node(node_1); node_pgv.attr['fillcolor'] = 'white'
+				Graph.add_node(node_2, shape = 'rectangle', label = label_2); node_pgv = Graph.get_node(node_2); node_pgv.attr['fillcolor'] = 'white'
+				if tuple([node_2, node_1]) in Graph.edges(): 
+					continue
+				else:
+					Graph.add_edge(node_2, node_1)
+		else:
+			for i in xrange(len(sig_kegg)):
+				node_1 = sig_kegg[i][kegg_site[hira]]; node_2 = sig_kegg[i][kegg_site[hira - 1]]
+				part_num_2 = int(math.ceil(len(node_2)/float(label_size)))
+				if part_num_2 > 1:
+					label_2 = '\\n'.join([node_2[((label-1) * label_size) : (label * label_size - 1)] for label in xrange(1, part_num_2 + 1)])
+				else:
+					label_2 = node_2 + ' ' * (label_size - len(node_2))
+				if kegg_site[hira - 1] <> kegg_site[0]:
+					Graph.add_node(node_2, shape = 'rectangle', label = label_2); node_pgv = Graph.get_node(node_2); node_pgv.attr['fillcolor'] = 'white'
+				else:
+					Graph.add_node(node_2, shape = 'rectangle', label = label_2); node_pgv = Graph.get_node(node_2); node_pgv.attr['fillcolor'] = nodecolors[i]
+				if tuple([node_2, node_1]) in Graph.edges():
+					continue
+				else:
+					Graph.add_edge(node_2, node_1)
+		hira -= 1
+	
+	Graph.draw(output_path + '/' + 'Kegg_sigenrich_networkx.png', prog='dot',args='-Gsplines=ortho')
+	Graph.draw(output_path + '/' + 'Kegg_sigenrich_networkx.svg', prog='dot',args='-Gsplines=ortho')
+
+def __main():
+	USAGE = "Usage: %prog [options]"
+	description = 'Contact: Li Huamei<li_hua_mei@163.com>'
+	parser = OptionParser(USAGE, description = description)
+	
+	parser.add_option('--run_kegg', dest = 'run', help = 'Run command', action = 'store_true')
+	parser.add_option('--kegg_sig', dest = 'sig', help = 'Kegg significant list file', metavar = 'FILE', type = 'string', default = None)
+	parser.add_option('--pvalue', dest = 'pvalue', help = 'Set pvalue as cut off or max number', metavar = 'FLOAT', type = 'float', default = None)
+	parser.add_option('--pvalue_max', dest = 'pvalue_max', help = 'Set max number ko id when use pvalue as cutoff for network', metavar = 'INT', type = 'int', default = 15)
+	parser.add_option('--maxnum', dest = 'max', help = 'Set max number ko id for network', metavar = 'INT', type = 'int', default = None)
+	parser.add_option('--color', dest = 'color', help = 'The color of significant ko id, and must be hex format', metavar = 'STR', type = 'string', default = '#FFFF00')
+	parser.add_option('--qsite', dest = 'qsite', help = 'pvalue site of significant kegg file', metavar = 'INT', type = 'int', default = 5)
+	parser.add_option('--hierarchy', dest = 'hierarchy', help = 'Number of hierarchy', metavar = 'INT', type = 'int', default = 2)
+	parser.add_option('--kegg_site', dest = 'kegg_site', help = 'The relation sites of kegg enrich file, eg.[1, 2, 3]', metavar = 'STR', type = 'string', default = '[1, 2, 3]')
+	parser.add_option('--box_size', dest = 'box_size', help = 'The size of kegg network box', metavar = 'INT', type = 'int', default = 30)
+	parser.add_option('--output', dest = 'output', help = 'Output file directory', metavar = 'STR', type = 'string', default = './kegg_annotation/')
+	
+	(options, argv) = parser.parse_args()
+	if not options.run:
+		parser.print_help()
+		exit(1)
+	if options.pvalue and options.max:
+		sys.stderr.write('[ERROR] P value and maxnum option select only one.\n')
+		parser.print_help()
+		exit(1)
+	if not options.pvalue and not options.max:
+		sys.stderr.write('[ERROR] Please set cut off option, pvalue or maxnum.\n')
+		parser.print_help()
+		exit(1)
+	if options.max:
+		if not type(options.max) is int:
+			sys.stderr.write("[ERROR] The options of '--maxnum' must be integer.\n")
+			parser.print_help()
+			exit(1)
+	if not options.color.startswith('#'):
+		sys.stderr.write('[ERROR] The color must be hex format.\n')
+		parser.print_help()
+		exit(1)
+	
+	start_time = time.time()
+	sys.stderr.write('[INFO] Task Start.\n')
+	[sig_kegg, pvalue_save] = sig_enrich_kegg(options.sig, options.pvalue_max, maxnum = options.max, pvalue = options.pvalue, qsite = options.qsite, output_path = options.output)
+	if not sig_kegg:
+		sys.stderr.write('[WARNING] No significant kegg info.\n')
+		exit(1)
+	nodecolors = define_nodecolors(pvalue_save, node_color = options.color)
+	kegg_site = [int(site.strip()) for site in options.kegg_site[1 : -1].split(',')]
+	parse_sig_kegg(sig_kegg, nodecolors, kegg_site = kegg_site, output_path = options.output, label_size = options.box_size, hira = options.hierarchy)
+	sys.stderr.write('Collaps %s seconds.\n'%(str(time.time() - start_time)))
+
+
+if __name__ == '__main__':
+	__main()
+	sys.stderr.write('[INFO] Task Done.\n')
+
